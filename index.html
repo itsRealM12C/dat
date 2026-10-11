@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>GD Save Extractor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8eb;
+    --muted: #8b92a3;
+    --accent: #5fd0a3;
+    --accent-dim: #2f6b53;
+    --danger: #e0677a;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f5f7;
+      --panel: #ffffff;
+      --border: #dde1e7;
+      --text: #1b1e24;
+      --muted: #666d7a;
+      --accent: #1f9d6e;
+      --accent-dim: #d6f0e4;
+      --danger: #c23a52;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e38; --text: #e6e8eb;
+    --muted: #8b92a3; --accent: #5fd0a3; --accent-dim: #2f6b53; --danger: #e0677a;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: rgba(255, 255, 255, 0); }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 28px 18px 60px;
+  }
+  header { margin-bottom: 20px; }
+  h1 {
+    font-size: 1.3rem;
+    margin: 0 0 4px;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 0.88rem;
+    line-height: 1.5;
+  }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 16px;
+  }
+  .drop {
+    border: 1.5px dashed var(--border);
+    border-radius: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.drag {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+  }
+  .drop p { margin: 4px 0; color: var(--muted); font-size: 0.86rem; }
+  .drop strong { color: var(--text); }
+  input[type=file] { display: none; }
+
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  select, button, input[type=text] {
+    font: inherit;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.85rem;
+  }
+  button {
+    cursor: pointer;
+    background: var(--accent-dim);
+    border-color: var(--accent);
+    color: var(--text);
+    font-weight: 600;
+  }
+  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.ghost { background: transparent; font-weight: 500; }
+  input[type=text] { flex: 1; min-width: 160px; }
+
+  .filemeta {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px;
+    font-size: 0.8rem; color: var(--muted); margin-top: 10px;
+  }
+  .filemeta b { color: var(--text); }
+
+  .status { font-size: 0.82rem; margin-top: 10px; }
+  .status.ok { color: var(--accent); }
+  .status.err { color: var(--danger); }
+
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+
+  .hits {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .hit {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 0.78rem;
+    background: var(--bg);
+  }
+  .hit .k { color: var(--accent); font-family: var(--mono); display: block; }
+  .hit .v { color: var(--text); font-family: var(--mono); word-break: break-all; }
+
+  pre#output {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 0.76rem;
+    line-height: 1.5;
+    overflow-x: auto;
+    max-height: 480px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  mark { background: var(--accent-dim); color: var(--text); border-radius: 2px; }
+  .empty { color: var(--muted); font-size: 0.85rem; padding: 20px 4px; }
+  footer { color: var(--muted); font-size: 0.75rem; text-align: center; margin-top: 24px; }
+  code { font-family: var(--mono); background: var(--bg); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>🧩 Geometry Dash Save Extractor</h1>
+    <div class="sub">
+      Decodes <code>CCGameManager.dat</code>, <code>CCGameManager2.dat</code>, <code>CCLocalLevels.dat</code> and <code>CCLocalLevels2.dat</code>
+      entirely in your browser — XOR‑11 → base64 → gzip → plist XML. Nothing is uploaded anywhere.
+    </div>
+  </header>
+
+  <div class="panel">
+    <div class="drop" id="drop">
+      <p><strong>Click to choose a file</strong> or drag it here</p>
+      <p>Accepts any <code>.dat</code> save file</p>
+      <input type="file" id="fileInput" accept=".dat,*/*">
+    </div>
+    <div class="filemeta" id="filemeta" style="display:none;">
+      <span>📄 <b id="fname"></b></span>
+      <span id="fsize"></span>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="panel" id="resultsPanel" style="display:none;">
+    <div class="toolbar">
+      <div class="row" style="flex:1;">
+        <input type="text" id="search" placeholder="Search keys/values (e.g. pass, usn, GJP, playerName)">
+      </div>
+      <button class="ghost" id="copyBtn">Copy XML</button>
+      <button class="ghost" id="downloadBtn">Download .xml</button>
+    </div>
+    <div id="hitsWrap"></div>
+    <pre id="output"></pre>
+  </div>
+
+  <footer>Decoding runs locally via JS (XOR + pako gzip). No network requests, no data leaves this page.</footer>
+</div>
+
+<script>
+const XOR_KEY = 11;
+const CRED_PATTERN = /pass|pwd|usn|user|login|gjp|udid|account|token|secret|email/i;
+
+const dropEl = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const statusEl = document.getElementById('status');
+const filemetaEl = document.getElementById('filemeta');
+const fnameEl = document.getElementById('fname');
+const fsizeEl = document.getElementById('fsize');
+const resultsPanel = document.getElementById('resultsPanel');
+const outputEl = document.getElementById('output');
+const hitsWrap = document.getElementById('hitsWrap');
+const searchEl = document.getElementById('search');
+const copyBtn = document.getElementById('copyBtn');
+const downloadBtn = document.getElementById('downloadBtn');
+
+let decodedXml = '';
+
+dropEl.addEventListener('click', () => fileInput.click());
+['dragenter','dragover'].forEach(evt =>
+  dropEl.addEventListener(evt, e => { e.preventDefault(); dropEl.classList.add('drag'); })
+);
+['dragleave','drop'].forEach(evt =>
+  dropEl.addEventListener(evt, e => { e.preventDefault(); dropEl.classList.remove('drag'); })
+);
+dropEl.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) handleFile(f);
+});
+fileInput.addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (f) handleFile(f);
+});
+
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024*1024) return (n/1024).toFixed(1) + ' KB';
+  return (n/1024/1024).toFixed(2) + ' MB';
+}
+
+function setStatus(msg, kind) {
+  statusEl.textContent = msg;
+  statusEl.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function handleFile(file) {
+  fnameEl.textContent = file.name;
+  fsizeEl.textContent = fmtBytes(file.size);
+  filemetaEl.style.display = 'flex';
+  resultsPanel.style.display = 'none';
+  setStatus('Decoding…');
+
+  try {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const { xml, method } = decodeGdSave(buf);
+    decodedXml = xml;
+    renderResult(xml);
+    setStatus('Decoded via "' + method + '" — ' + xml.length.toLocaleString() + ' characters of plist XML.', 'ok');
+  } catch (err) {
+    console.error(err);
+    resultsPanel.style.display = 'none';
+    setStatus('Could not decode this file with any known GD scheme: ' + err.message, 'err');
+  }
+}
+
+function bytesToBinaryString(bytes) {
+  let s = '';
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return s;
+}
+
+function xorBytes(bytes, key) {
+  const out = new Uint8Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) out[i] = bytes[i] ^ key;
+  return out;
+}
+
+// Strip anything that isn't a valid base64 char (handles stray trailing bytes
+// some save variants leave on the end of the buffer).
+function cleanBase64(str, urlsafe) {
+  const allowed = urlsafe ? /[^A-Za-z0-9\-_]/g : /[^A-Za-z0-9+/]/g;
+  let s = str.replace(allowed, '');
+  if (urlsafe) s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4 !== 0) s += '=';
+  return s;
+}
+
+function inflateAny(raw) {
+  try { return pako.ungzip(raw); } catch (e) {}
+  try { return pako.inflate(raw); } catch (e) {}
+  try { return pako.inflateRaw(raw); } catch (e) {}
+  return null;
+}
+
+// Tries every known GD save transform combo and returns the first that
+// produces plausible plist XML.
+function decodeGdSave(bytes) {
+  const attempts = [];
+
+  // XOR variants to try: key 11 (standard GD obfuscation), then no XOR at all
+  for (const key of [XOR_KEY, 0]) {
+    const xored = key ? xorBytes(bytes, key) : bytes;
+    const asStr = bytesToBinaryString(xored);
+    for (const urlsafe of [true, false]) {
+      attempts.push({
+        label: (key ? 'XOR-' + key : 'no XOR') + ' \u2192 ' + (urlsafe ? 'url-safe' : 'standard') + ' base64 \u2192 gzip/zlib',
+        run: () => {
+          const b64 = cleanBase64(asStr, urlsafe);
+          const binStr = atob(b64);
+          const raw = new Uint8Array(binStr.length);
+          for (let i = 0; i < binStr.length; i++) raw[i] = binStr.charCodeAt(i);
+          const inflated = inflateAny(raw);
+          if (!inflated) throw new Error('inflate failed');
+          return inflated;
+        }
+      });
+    }
+  }
+
+  // Fallback: maybe it's already gzip/zlib bytes with no base64 layer (XOR 11 or not)
+  for (const key of [XOR_KEY, 0]) {
+    attempts.push({
+      label: (key ? 'XOR-' + key : 'no XOR') + ' \u2192 gzip/zlib (no base64)',
+      run: () => {
+        const xored = key ? xorBytes(bytes, key) : bytes;
+        const inflated = inflateAny(xored);
+        if (!inflated) throw new Error('inflate failed');
+        return inflated;
+      }
+    });
+  }
+
+  const errors = [];
+  for (const attempt of attempts) {
+    try {
+      const inflated = attempt.run();
+      const text = new TextDecoder('utf-8', { fatal: false }).decode(inflated);
+      if (text.includes('<plist') || text.includes('<dict') || text.trim().startsWith('<')) {
+        return { xml: text, method: attempt.label };
+      }
+      // keep as a weak candidate in case nothing better matches
+      errors.push({ label: attempt.label, text });
+    } catch (e) {
+      errors.push({ label: attempt.label, error: e.message });
+    }
+  }
+
+  // No clean XML match — if any attempt at least produced decodable text, surface the best guess
+  const weak = errors.find(e => e.text && e.text.length > 20);
+  if (weak) return { xml: weak.text, method: weak.label + ' (unverified — output did not look like plist XML)' };
+
+  throw new Error('none of the known XOR/base64/gzip combinations produced readable output — this may not be a standard GD save file');
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+const GJP_XOR_KEY = 37; // GD's separate obfuscation key for the legacy GJP password field
+
+// Attempts the GJP-style secondary decode: base64-decode -> XOR-37.
+// Returns a printable string if it looks plausible, otherwise null.
+function tryGjpDecode(value) {
+  if (!value || value.length < 4) return null;
+  try {
+    const b64 = value.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64 + '='.repeat((4 - (b64.length % 4)) % 4);
+    const binStr = atob(padded);
+    let out = '';
+    for (let i = 0; i < binStr.length; i++) {
+      out += String.fromCharCode(binStr.charCodeAt(i) ^ GJP_XOR_KEY);
+    }
+    // printable-ish ASCII check
+    if (/^[\x20-\x7e]+$/.test(out) && out.length >= 3) return out;
+    return null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function findCredentialLikePairs(xml) {
+  // crude plist <k>key</k><type>value</type> pair scan
+  const pairs = [];
+  const re = /<k>([^<]*)<\/k><([a-z]+)>([^<]*)<\/\2>/gi;
+  let m;
+  while ((m = re.exec(xml)) !== null) {
+    const [, key, , val] = m;
+    if (CRED_PATTERN.test(key)) {
+      const decoded = tryGjpDecode(val);
+      pairs.push([key, val, decoded]);
+    }
+  }
+  return pairs;
+}
+
+function renderResult(xml) {
+  resultsPanel.style.display = 'block';
+  const hits = findCredentialLikePairs(xml);
+  if (hits.length) {
+    hitsWrap.innerHTML = '<div style="font-size:0.8rem;color:var(--muted);margin-bottom:6px;">' +
+      hits.length + ' credential-looking field(s) found (GJP-style fields are also tried through a secondary XOR-37+base64 decode):</div><div class="hits">' +
+      hits.map(([k,v,decoded]) => `<div class="hit"><span class="k">${escapeHtml(k)}</span><span class="v">${escapeHtml(v)}</span>${decoded ? `<span class="v" style="color:var(--accent);display:block;margin-top:4px;">\u2192 ${escapeHtml(decoded)}</span>` : ''}</div>`).join('') +
+      '</div>';
+  } else {
+    hitsWrap.innerHTML = '<div class="empty">No password / username / login-token style fields found in this file.</div>';
+  }
+  applySearch();
+}
+
+function applySearch() {
+  const q = searchEl.value.trim();
+  if (!q) {
+    outputEl.innerHTML = escapeHtml(decodedXml);
+    return;
+  }
+  const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+  outputEl.innerHTML = escapeHtml(decodedXml).replace(re, m => `<mark>${m}</mark>`);
+}
+
+searchEl.addEventListener('input', applySearch);
+
+copyBtn.addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(decodedXml);
+    copyBtn.textContent = 'Copied ✓';
+    setTimeout(() => copyBtn.textContent = 'Copy XML', 1200);
+  } catch (e) {
+    alert('Clipboard not available — select the text manually.');
+  }
+});
+
+downloadBtn.addEventListener('click', () => {
+  const blob = new Blob([decodedXml], { type: 'application/xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = (fnameEl.textContent || 'save').replace(/\.dat$/i, '') + '.xml';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
